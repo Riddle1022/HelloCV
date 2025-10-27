@@ -1,0 +1,84 @@
+#include <opencv2/opencv.hpp>
+using namespace cv;
+using namespace std;
+
+int main() {
+    // 1. 读取输入视频
+    VideoCapture cap("TrafficLight.mp4");
+    if (!cap.isOpened()) {
+        cerr << "无法打开视频！" << endl;
+        return -1;
+    }
+
+    // 2. 获取视频参数（用于初始化输出视频）
+    int fps = cap.get(CAP_PROP_FPS);
+    int width = cap.get(CAP_PROP_FRAME_WIDTH);
+    int height = cap.get(CAP_PROP_FRAME_HEIGHT);
+    VideoWriter writer("result.avi", VideoWriter::fourcc('M','J','P','G'), fps, Size(width, height));
+    Mat frame, hsv, blur_hsv;
+    while (cap.read(frame)) {
+        // 转HSV色彩空间
+        cvtColor(frame, hsv, COLOR_BGR2HSV);
+        // 高斯滤波去噪
+        GaussianBlur(hsv, blur_hsv, Size(5, 5), 0);
+         // 定义红绿灯的HSV阈值
+        Scalar red_low1(0, 43, 46), red_high1(10, 255, 255);   // 红色区间1
+        Scalar red_low2(156, 43, 46), red_high2(180, 255, 255); // 红色区间2
+        Scalar green_low(35, 43, 46), green_high(77, 255, 255); // 绿色区间
+        // 生成红色掩码（合并两个区间）
+        Mat red_mask1, red_mask2, red_mask;
+        inRange(blur_hsv, red_low1, red_high1, red_mask1);
+        inRange(blur_hsv, red_low2, red_high2, red_mask2);
+        bitwise_or(red_mask1, red_mask2, red_mask);
+
+        // 生成绿色掩码
+        Mat green_mask;
+        inRange(blur_hsv, green_low, green_high, green_mask);
+
+        // 查找红色/绿色区域的轮廓
+        vector<vector<Point>> red_contours, green_contours;
+        findContours(red_mask, red_contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+        findContours(green_mask, green_contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+        string light_color = "Unknown";
+        Rect light_rect;
+
+        // 检测红色灯
+        if (!red_contours.empty()) {
+            // 取面积最大的轮廓
+            int max_area = 0, max_idx = 0;
+            for (int i = 0; i < red_contours.size(); i++) {
+                int area = contourArea(red_contours[i]);
+                if (area > max_area) { max_area = area; max_idx = i; }
+            }
+            light_rect = boundingRect(red_contours[max_idx]);
+            rectangle(frame, light_rect, Scalar(0, 0, 255), 2); // 红色框标出位置
+            light_color = "Red";
+        }
+        // 检测绿色灯（绿色优先级低于红色，避免同时检测）
+        else if (!green_contours.empty()) {
+            int max_area = 0, max_idx = 0;
+            for (int i = 0; i < green_contours.size(); i++) {
+                int area = contourArea(green_contours[i]);
+                if (area > max_area) { max_area = area; max_idx = i; }
+            }
+            light_rect = boundingRect(green_contours[max_idx]);
+            rectangle(frame, light_rect, Scalar(0, 255, 0), 2); // 绿色框标出位置
+            light_color = "Green";
+        }
+
+        // 在左上角输出颜色文字
+        putText(frame, "Light: " + light_color, Point(20, 30), 
+                FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 2);
+                // 写入输出视频
+        writer.write(frame);
+
+        // 显示实时处理结果（按q退出）
+        imshow("Traffic Light Detection", frame);
+        if (waitKey(1) == 'q') break;
+    }
+     // 释放资源
+    cap.release();
+    writer.release();
+    destroyAllWindows();
+    return 0;
+}
